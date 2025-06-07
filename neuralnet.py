@@ -2,28 +2,32 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torchvision import datasets, transforms
-from torch.utils.data import DataLoader, random_split
-import numpy as np
+from torch.utils.data import ConcatDataset, random_split, DataLoader
 
-# 1. 设备设置
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# 2. 数据准备
+# 数据加载和划分
 transform = transforms.ToTensor()
-full_train = datasets.FashionMNIST(root='./data', train=True, download=True, transform=transform)
+train_raw = datasets.FashionMNIST(root='./data', train=True, download=True, transform=transform)
+test_raw = datasets.FashionMNIST(root='./data', train=False, download=True, transform=transform)
+full_dataset = ConcatDataset([train_raw, test_raw])
 
-train_size = int(0.8 * len(full_train))
-val_size = len(full_train) - train_size
-train_set, val_set = random_split(full_train, [train_size, val_size])
+n_total = len(full_dataset)
+n_test = int(0.2 * n_total)
+n_trainval = n_total - n_test
+n_train = int(0.8 * n_trainval)
+n_val = n_trainval - n_train
+trainval_data, test_data = random_split(full_dataset, [n_trainval, n_test])
+train_data, val_data = random_split(trainval_data, [n_train, n_val])
 
-train_loader = DataLoader(train_set, batch_size=64, shuffle=True)
-val_loader = DataLoader(val_set, batch_size=64, shuffle=False)
+train_loader = DataLoader(train_data, batch_size=64, shuffle=True)
+val_loader = DataLoader(val_data, batch_size=64)
 
-# 3. 定义网络结构（1 hidden layer, 128 units）
+# 模型定义
 class FeedforwardNN(nn.Module):
     def __init__(self):
         super().__init__()
-        self.model = nn.Sequential(
+        self.net = nn.Sequential(
             nn.Flatten(),
             nn.Linear(28 * 28, 128),
             nn.ReLU(),
@@ -31,38 +35,33 @@ class FeedforwardNN(nn.Module):
         )
 
     def forward(self, x):
-        return self.model(x)
+        return self.net(x)
 
-# 4. 初始化网络
+# 初始化和训练
 model = FeedforwardNN().to(device)
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.parameters(), lr=0.001)
 
-# 5. 训练模型
-epochs = 5
-for epoch in range(epochs):
+for epoch in range(5):
     model.train()
     total_loss = 0
-    for inputs, labels in train_loader:
-        inputs, labels = inputs.to(device), labels.to(device)
+    for X, y in train_loader:
+        X, y = X.to(device), y.to(device)
         optimizer.zero_grad()
-        outputs = model(inputs)
-        loss = criterion(outputs, labels)
+        loss = criterion(model(X), y)
         loss.backward()
         optimizer.step()
         total_loss += loss.item()
     print(f"Epoch {epoch+1}, Loss: {total_loss:.2f}")
 
-# 6. 评估准确率
+# 验证
 model.eval()
 correct, total = 0, 0
 with torch.no_grad():
-    for inputs, labels in val_loader:
-        inputs, labels = inputs.to(device), labels.to(device)
-        outputs = model(inputs)
-        preds = torch.argmax(outputs, dim=1)
-        correct += (preds == labels).sum().item()
-        total += labels.size(0)
+    for X, y in val_loader:
+        X, y = X.to(device), y.to(device)
+        preds = model(X).argmax(dim=1)
+        correct += (preds == y).sum().item()
+        total += y.size(0)
 
-accuracy = correct / total
-print(f"Validation Accuracy: {accuracy:.4f}")
+print(f"Validation Accuracy: {correct / total:.4f}")
